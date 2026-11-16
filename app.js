@@ -115,7 +115,7 @@
     laden = new AbortController();
     melde(`Lade Kartendaten für ${z.ort.name} …${z.radius > 1000 ? " (großer Ausschnitt, das dauert etwas)" : ""}`);
     try {
-      const d = await KG.ladeOrt(z.ort.lat, z.ort.lon, z.radius, laden.signal);
+      const d = await KG.ladeOrt(z.ort.lat, z.ort.lon, z.radius, laden.signal, (t) => melde(t));
       if (!d.roads.length) throw new Error("An diesem Ort gibt es keine Straßen in OpenStreetMap. Versuch einen größeren Ausschnitt.");
       cache.set(key, d);
       daten = d;
@@ -173,20 +173,26 @@
   $("standort").addEventListener("click", () => {
     if (!navigator.geolocation) return melde("Dieser Browser kann den Standort nicht bestimmen.", true);
     melde("Bestimme Standort …");
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const { latitude: lat, longitude: lon, accuracy } = pos.coords;
-        let name = "Mein Ort";
-        try { name = await KG.ortsname(lat, lon); } catch {}
-        const m = Math.round(accuracy);
-        const hinweis = m > 250
-          ? `Standort nur auf etwa ${m.toLocaleString("de-DE")} m genau. Schalte GPS bzw. „Genauer Standort“ ein und tippe erneut auf „Mein Standort“.`
-          : `Karte mittig auf deinem Standort (auf ±${m} m genau).`;
-        waehleOrt({ name, label: name, lat, lon, fantasie: false, hinweis, warnung: m > 250 });
-      },
-      () => melde("Standort nicht verfügbar. Erlaube den Zugriff oder suche den Ort per Namen.", true),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
-    );
+    const gefunden = async (pos) => {
+      const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+      let name = "Mein Ort";
+      try { name = await KG.ortsname(lat, lon); } catch {}
+      const m = Math.round(accuracy);
+      const hinweis = m > 250
+        ? `Standort nur auf etwa ${m.toLocaleString("de-DE")} m genau. Schalte GPS bzw. „Genauer Standort“ ein und tippe erneut auf „Mein Standort“.`
+        : `Karte mittig auf deinem Standort (auf ±${m} m genau).`;
+      waehleOrt({ name, label: name, lat, lon, fantasie: false, hinweis, warnung: m > 250 });
+    };
+    const fehler = (e) => {
+      if (e.code === 1) melde("Kein Zugriff auf den Standort. Erlaube ihn in den Browser-Einstellungen für diese Seite und versuch es erneut.", true);
+      else melde("Standort konnte nicht bestimmt werden. Geh ans Fenster oder nach draußen, oder suche den Ort per Namen.", true);
+    };
+    // Erst genau per GPS; klappt das nicht rechtzeitig, die grobe Netzwerk-Position nehmen
+    navigator.geolocation.getCurrentPosition(gefunden, (e) => {
+      if (e.code === 1) return fehler(e);
+      melde("GPS antwortet nicht, nehme ungefähre Position …");
+      navigator.geolocation.getCurrentPosition(gefunden, fehler, { enableHighAccuracy: false, maximumAge: 120000, timeout: 15000 });
+    }, { enableHighAccuracy: true, maximumAge: 30000, timeout: 15000 });
   });
 
   $("fantasie").addEventListener("click", () => {

@@ -7,6 +7,7 @@
   const OVERPASS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   ];
   const HAEUSER_MIT_FORM = 1000; // Gebäude bis zu diesem Radius mit Umriss, darüber nur als Punkt
 
@@ -55,29 +56,52 @@ out geom qt;
 ${r > rb ? `(way["building"]${a}; - way["building"]${b};);\nout center qt;` : ""}`;
   }
 
-  KG.ladeOrt = async function (lat, lon, radius, signal) {
+  const BESETZT = "Die Kartenserver sind gerade ausgelastet. Warte eine Minute und versuch es dann noch einmal, oder wähle einen kleineren Ausschnitt.";
+
+  function warte(ms, signal) {
+    return new Promise((ok, nein) => {
+      const t = setTimeout(ok, ms);
+      signal?.addEventListener("abort", () => { clearTimeout(t); nein(new DOMException("abgebrochen", "AbortError")); }, { once: true });
+    });
+  }
+
+  // Lädt Kartendaten. Bei überlasteten Servern wird der nächste Server probiert und
+  // danach mit Pause erneut versucht. onStatus(text) meldet den Fortschritt.
+  KG.ladeOrt = async function (lat, lon, radius, signal, onStatus = () => {}) {
     const body = "data=" + encodeURIComponent(abfrage(lat, lon, radius));
-    let letzterFehler;
-    for (const url of OVERPASS) {
-      try {
-        const r = await fetch(url, {
-          method: "POST",
-          body,
-          signal,
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        });
-        if (r.status === 429 || r.status === 504) {
-          letzterFehler = new Error("Der Kartenserver ist gerade ausgelastet. Versuch es gleich noch einmal oder wähle einen kleineren Ausschnitt.");
-          continue;
+    const pausen = [0, 8000, 20000];
+    let besetzt = false, netzFehler = null, andererFehler = null;
+    for (const pause of pausen) {
+      if (pause) {
+        for (let rest = pause / 1000; rest > 0; rest--) {
+          onStatus(`Kartenserver ausgelastet. Neuer Versuch in ${rest} s …`);
+          await warte(1000, signal);
         }
-        if (!r.ok) throw new Error(`Kartenserver antwortet mit Fehler ${r.status}`);
-        return KG.wandle(await r.json(), lat, lon, radius);
-      } catch (e) {
-        if (e.name === "AbortError") throw e;
-        letzterFehler = e;
+        onStatus("Lade Kartendaten …");
       }
+      for (const url of OVERPASS) {
+        try {
+          const r = await fetch(url, {
+            method: "POST",
+            body,
+            signal,
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          });
+          if (r.status === 429 || r.status === 503 || r.status === 504) { besetzt = true; continue; }
+          if (!r.ok) { andererFehler = new Error(`Kartenserver antwortet mit Fehler ${r.status}`); continue; }
+          const json = await r.json();
+          // Overpass meldet Zeitüberschreitung und Überlastung teils nur im Feld „remark“
+          if (json.remark && /runtime error|rate_limited|timed out|timeout|out of memory/i.test(json.remark)) { besetzt = true; continue; }
+          return KG.wandle(json, lat, lon, radius);
+        } catch (e) {
+          if (e.name === "AbortError") throw e;
+          netzFehler = e;
+        }
+      }
+      if (!besetzt) break; // nur bei Überlastung lohnt sich ein neuer Versuch
     }
-    throw letzterFehler;
+    if (besetzt) throw new Error(BESETZT);
+    throw andererFehler || netzFehler;
   };
 
   // Straßenklassen: 0 Autobahn … 7 Fußweg, -1 = ignorieren
