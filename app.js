@@ -109,7 +109,7 @@
     const key = `${z.ort.lat.toFixed(5)},${z.ort.lon.toFixed(5)},${z.radius}`;
     if (cache.has(key)) {
       daten = cache.get(key);
-      melde("");
+      melde(z.ort.hinweis || "", z.ort.warnung);
       return zeichne();
     }
     laden = new AbortController();
@@ -119,7 +119,7 @@
       if (!d.roads.length) throw new Error("An diesem Ort gibt es keine Straßen in OpenStreetMap. Versuch einen größeren Ausschnitt.");
       cache.set(key, d);
       daten = d;
-      melde("");
+      melde(z.ort.hinweis || "", z.ort.warnung);
       zeichne();
     } catch (e) {
       if (e.name === "AbortError") return;
@@ -175,13 +175,17 @@
     melde("Bestimme Standort …");
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        const { latitude: lat, longitude: lon } = pos.coords;
+        const { latitude: lat, longitude: lon, accuracy } = pos.coords;
         let name = "Mein Ort";
         try { name = await KG.ortsname(lat, lon); } catch {}
-        waehleOrt({ name, label: name, lat, lon, fantasie: false });
+        const m = Math.round(accuracy);
+        const hinweis = m > 250
+          ? `Standort nur auf etwa ${m.toLocaleString("de-DE")} m genau. Schalte GPS bzw. „Genauer Standort“ ein und tippe erneut auf „Mein Standort“.`
+          : `Karte mittig auf deinem Standort (auf ±${m} m genau).`;
+        waehleOrt({ name, label: name, lat, lon, fantasie: false, hinweis, warnung: m > 250 });
       },
       () => melde("Standort nicht verfügbar. Erlaube den Zugriff oder suche den Ort per Namen.", true),
-      { enableHighAccuracy: false, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
     );
   });
 
