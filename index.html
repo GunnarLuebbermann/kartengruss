@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kartengruß</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Generative Postkarten aus OpenStreetMap-Daten">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=DM+Mono:wght@400;500&family=Public+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: Handy = Vorschau oben, Einstellungen darunter; ab 900px Vorschau links (klebt), Einstellungen rechts.
+   Schreibtisch-Fläche mit der Karte als einzigem Objekt, das Schatten trägt. Akzent: Stempelblau. */
+:root {
+  --tisch: #e7ebee;
+  --flaeche: #f8fafb;
+  --tinte: #1b2329;
+  --leise: #5f6b75;
+  --linie: #cfd6dc;
+  --stempel: #3044b5;
+  --stempel-text: #ffffff;
+  --fehler: #b3261e;
+  --schatten: 0 1px 2px rgba(20, 30, 40, .12), 0 12px 32px -8px rgba(20, 30, 40, .28);
+  --f-anzeige: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --f-text: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "DM Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tisch: #13181d; --flaeche: #1b2229; --tinte: #e4e9ed; --leise: #96a2ad; --linie: #2e3841;
+    --stempel: #8e9cff; --stempel-text: #0f1530; --fehler: #ff8a80;
+    --schatten: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px -10px rgba(0,0,0,.7);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --tisch: #13181d; --flaeche: #1b2229; --tinte: #e4e9ed; --leise: #96a2ad; --linie: #2e3841;
+  --stempel: #8e9cff; --stempel-text: #0f1530; --fehler: #ff8a80;
+  --schatten: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px -10px rgba(0,0,0,.7);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--tisch);
+  color: var(--tinte);
+  font: 15px/1.5 var(--f-text);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+}
+.seite { max-width: 1180px; margin: 0 auto; display: grid; gap: 22px; }
+header.kopf { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font: 700 clamp(26px, 6vw, 34px)/1.05 var(--f-anzeige); margin: 0; letter-spacing: -0.01em; }
+.unterzeile { color: var(--leise); margin: 2px 0 0; font-size: 14px; text-wrap: balance; }
+
+form.suche { display: flex; gap: 8px; flex-wrap: wrap; }
+.suche input {
+  flex: 1 1 220px; min-width: 0;
+  font: 16px var(--f-text); color: var(--tinte);
+  background: var(--flaeche); border: 1px solid var(--linie); border-radius: 10px;
+  padding: 11px 14px;
+}
+.suche input:focus { outline: 2px solid var(--stempel); outline-offset: 1px; }
+.knopf {
+  font: 600 14px var(--f-text); border-radius: 10px; padding: 10px 14px; cursor: pointer;
+  border: 1px solid var(--linie); background: var(--flaeche); color: var(--tinte);
+}
+.knopf.haupt { background: var(--stempel); color: var(--stempel-text); border-color: var(--stempel); }
+.knopf:disabled { opacity: .5; cursor: default; }
+.knopf:focus-visible, .chip:focus-visible, .farbe:focus-visible, .treffer button:focus-visible { outline: 2px solid var(--stempel); outline-offset: 2px; }
+.nebenwege { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.treffer { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.treffer button {
+  width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: var(--flaeche); border: 1px solid var(--linie); border-radius: 10px; padding: 10px 12px;
+}
+.treffer strong { display: block; font-weight: 600; }
+.treffer span { color: var(--leise); font-size: 13px; display: block; overflow-wrap: anywhere; }
+.treffer:empty, .meldung:empty { display: none; }
+.meldung { color: var(--leise); font-size: 14px; margin: 0; }
+.meldung.fehler { color: var(--fehler); }
+
+.haupt-raster { display: grid; gap: 22px; align-items: start; }
+@media (min-width: 900px) {
+  .haupt-raster { grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr); }
+  .vorschau { position: sticky; top: 18px; }
+}
+.vorschau { display: grid; gap: 10px; justify-items: center; min-width: 0; }
+.karte-rahmen { width: 100%; display: grid; place-items: center; }
+#karte {
+  display: block; max-width: 100%; height: auto;
+  box-shadow: var(--schatten); border-radius: 3px;
+  background: var(--flaeche);
+  transform: rotate(-0.6deg);
+}
+@media (prefers-reduced-motion: no-preference) { #karte { transition: transform .4s ease; } #karte:hover { transform: rotate(0deg); } }
+.fuss-vorschau { font: 12.5px var(--f-mono); color: var(--leise); text-align: center; }
+
+.regler { display: grid; gap: 18px; min-width: 0; }
+fieldset { border: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+legend { font: 600 12px var(--f-text); letter-spacing: .08em; text-transform: uppercase; color: var(--leise); padding: 0; margin-bottom: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: 500 14px var(--f-text); color: var(--tinte); cursor: pointer;
+  background: var(--flaeche); border: 1px solid var(--linie); border-radius: 999px; padding: 7px 13px;
+}
+.chip[aria-pressed="true"] { background: var(--tinte); color: var(--flaeche); border-color: var(--tinte); }
+.chip small { font: 12px var(--f-mono); opacity: .7; margin-left: 4px; }
+.farben { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.farbe {
+  cursor: pointer; font: 500 12.5px var(--f-text); color: var(--tinte);
+  background: var(--flaeche); border: 1px solid var(--linie); border-radius: 10px;
+  padding: 6px; display: grid; gap: 5px; text-align: left;
+}
+.farbe[aria-pressed="true"] { border-color: var(--stempel); box-shadow: 0 0 0 1px var(--stempel); }
+.farbe .streifen { display: flex; height: 22px; border-radius: 6px; overflow: hidden; }
+.farbe .streifen i { flex: 1; }
+.feld { display: grid; gap: 4px; }
+.feld label { font-size: 13px; color: var(--leise); }
+.feld input {
+  font: 16px var(--f-text); color: var(--tinte); background: var(--flaeche);
+  border: 1px solid var(--linie); border-radius: 10px; padding: 9px 12px; min-width: 0;
+}
+.zwei { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 420px) { .zwei { grid-template-columns: 1fr; } }
+.aktionen { display: flex; gap: 8px; flex-wrap: wrap; }
+.aktionen .knopf { flex: 1 1 auto; }
+
+/* Export-Ansicht */
+.export {
+  position: fixed; inset: 0; z-index: 20;
+  background: color-mix(in oklab, var(--tisch) 92%, transparent);
+  backdrop-filter: blur(6px);
+  display: grid; place-items: center;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.export-innen { display: grid; gap: 12px; justify-items: center; max-width: 720px; width: 100%; max-height: 100%; }
+.export img { max-width: 100%; max-height: 62vh; box-shadow: var(--schatten); border-radius: 3px; }
+.export p { margin: 0; text-align: center; color: var(--leise); font-size: 14px; }
+.fusszeile { color: var(--leise); font-size: 12.5px; }
+.fusszeile a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="seite">
+  <header class="kopf">
+    <div>
+      <h1>Kartengruß</h1>
+      <p class="unterzeile">Generative Postkarten aus den Straßen, Flüssen und Häusern eines Ortes.</p>
+    </div>
+  </header>
+
+  <section aria-label="Ort wählen" style="display:grid;gap:10px">
+    <form class="suche" id="suche">
+      <input id="ortsfeld" name="ort" type="search" placeholder="Ort suchen, z. B. Bremen Schnoor" autocomplete="off" enterkeyhint="search">
+      <button class="knopf haupt" type="submit">Suchen</button>
+    </form>
+    <div class="nebenwege">
+      <button class="knopf" type="button" id="standort">Mein Standort</button>
+      <button class="knopf" type="button" id="fantasie">Fantasieort erfinden</button>
+    </div>
+    <ul class="treffer" id="treffer"></ul>
+    <p class="meldung" id="meldung" role="status"></p>
+  </section>
+
+  <div class="haupt-raster">
+    <section class="vorschau" aria-label="Vorschau">
+      <div class="karte-rahmen" id="rahmen"><canvas id="karte" width="800" height="567" aria-label="Postkarten-Vorschau"></canvas></div>
+      <div class="fuss-vorschau" id="info"></div>
+    </section>
+
+    <section class="regler" aria-label="Gestaltung">
+      <fieldset><legend>Stil</legend><div class="chips" id="stil"></div></fieldset>
+      <fieldset><legend>Farben</legend><div class="farben" id="palette"></div></fieldset>
+      <fieldset><legend>Ausschnitt</legend><div class="chips" id="radius"></div></fieldset>
+      <fieldset><legend>Format</legend><div class="chips" id="format"></div></fieldset>
+      <fieldset><legend>Form</legend><div class="chips" id="form"></div></fieldset>
+      <fieldset>
+        <legend>Beschriftung</legend>
+        <div class="chips" id="text"></div>
+        <div class="zwei">
+          <div class="feld"><label for="gruss">Zeile oben</label><input id="gruss" type="text" value="GRÜSSE AUS" maxlength="40"></div>
+          <div class="feld"><label for="titel">Ortsname</label><input id="titel" type="text" maxlength="40"></div>
+        </div>
+      </fieldset>
+      <div class="aktionen">
+        <button class="knopf" type="button" id="wuerfeln">Neu würfeln</button>
+        <button class="knopf haupt" type="button" id="speichern">Postkarte speichern</button>
+      </div>
+      <p class="fusszeile">Kartendaten © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-Mitwirkende</a> (ODbL). Ortssuche über Nominatim.</p>
+    </section>
+  </div>
+</div>
+
+<div class="export" id="export" hidden>
+  <div class="export-innen">
+    <img id="export-bild" alt="Fertige Postkarte">
+    <p id="export-hinweis">Am Handy: Bild lange drücken und „Bild sichern“ wählen.</p>
+    <div class="aktionen" style="width:100%;max-width:420px">
+      <button class="knopf" type="button" id="teilen" hidden>Teilen</button>
+      <a class="knopf haupt" id="herunterladen" download="kartengruss.png" style="text-align:center;text-decoration:none">Herunterladen</a>
+      <button class="knopf" type="button" id="schliessen">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<script src="fantasie.js"></script>
+<script src="osm.js"></script>
+<script src="render.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
